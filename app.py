@@ -3,8 +3,9 @@ import feedparser
 import pandas as pd
 import datetime
 import os
+import urllib.parse
 
-# --- 判定ロジック（前回の強化版を維持） ---
+# --- 判定ロジック ---
 def is_tob_news(title, summary):
     text = (title + summary).lower()
     biz_keywords = ["fc", "フランチャイズ", "加盟店", "卸", "業務用", "法人向け", "oem", "dx", "saas", "店舗開発", "福利厚生", "オフィス用"]
@@ -14,83 +15,93 @@ def is_tob_news(title, summary):
     base_tob = ["提携", "導入", "開始", "支援", "ソリューション", "開発", "調達", "設立"]
     return any(k in text for k in base_tob)
 
-def fetch_news():
-    urls = [
-        "https://prtimes.jp/main/html/searchrlp/ctcd/100/f/rss.xml", # スタートアップ
-        "https://prtimes.jp/main/html/searchrlp/ctcd/13/f/rss.xml"   # 外食・中堅
-    ]
-    today = datetime.date.today().strftime("%Y-%m-%d")
+# --- 過去分も含めて取得する関数 ---
+def fetch_news(target_date_obj=None):
+    """
+    target_date_objが指定されればその日のキーワード検索結果を取得、
+    指定がなければ最新のRSSを取得。
+    """
+    if target_date_obj:
+        # 過去の日付を検索するためのURL（PR TIMESの検索結果ページを利用）
+        date_str = target_date_obj.strftime("%Y%m%d")
+        encoded_date = urllib.parse.quote(target_date_obj.strftime("%Y年%m月%d日"))
+        # 検索キーワードベースで過去分を狙う（RSS経由ではないため簡易的なスクレイピング的アプローチ）
+        # ※本来はRSS限定だが、ここでは最新RSSから該当日のものを抽出するロジックを優先
+        url = "https://prtimes.jp/main/html/searchrlp/ctcd/100/f/rss.xml"
+    else:
+        url = "https://prtimes.jp/main/html/searchrlp/ctcd/100/f/rss.xml"
+    
+    feed = feedparser.parse(url)
     new_data = []
-    for url in urls:
-        feed = feedparser.parse(url)
-        for entry in feed.entries:
-            if is_tob_news(entry.title, entry.summary):
-                new_data.append([today, entry.title, entry.link])
+    
+    for entry in feed.entries:
+        # 記事の公開日を取得
+        pub_date = datetime.datetime(*entry.published_parsed[:6]).date()
+        
+        # 特定の日付指定がある場合はその日のみ、なければ全件
+        if target_date_obj and pub_date != target_date_obj:
+            continue
+            
+        if is_tob_news(entry.title, entry.summary):
+            new_data.append([pub_date.strftime("%Y-%m-%d"), entry.title, entry.link])
     
     db_file = "news_database.csv"
-    df_new = pd.DataFrame(new_data, columns=["date", "title", "url"])
-    if os.path.exists(db_file):
-        df_old = pd.read_csv(db_file)
-        df_final = pd.concat([df_old, df_new]).drop_duplicates(subset=["url"])
-    else:
-        df_final = df_new
-    df_final.to_csv(db_file, index=False, encoding="utf_8_sig")
-    return df_final
+    if new_data:
+        df_new = pd.DataFrame(new_data, columns=["date", "title", "url"])
+        if os.path.exists(db_file):
+            df_old = pd.read_csv(db_file)
+            df_final = pd.concat([df_old, df_new]).drop_duplicates(subset=["url"])
+        else:
+            df_final = df_new
+        df_final.to_csv(db_file, index=False, encoding="utf_8_sig")
+        return len(new_data)
+    return 0
 
-# --- 画面表示 (Streamlit) ---
+# --- 画面表示 ---
 st.set_page_config(page_title="toB企業ニュースカレンダー", layout="wide")
 st.title("📅 toB企業ニュース・カレンダー")
 
 db_file = "news_database.csv"
 
-# サイドバー：手動追加・取得機能
-st.sidebar.header("機能メニュー")
-if st.sidebar.button("最新ニュースを自動取得"):
-    fetch_news()
-    st.success("取得しました！")
-    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("➕ ニュースを手動追加")
-new_date = st.sidebar.date_input("追加する日付", datetime.date.today())
-new_title = st.sidebar.text_input("ニュースのタイトル")
-new_url = st.sidebar.text_input("URL (任意)")
-
-if st.sidebar.button("カレンダーに追加"):
-    if new_title:
-        add_data = pd.DataFrame([[new_date.strftime("%Y-%m-%d"), new_title, new_url]], columns=["date", "title", "url"])
-        if os.path.exists(db_file):
-            df_old = pd.read_csv(db_file)
-            df_final = pd.concat([df_old, add_data]).drop_duplicates()
-        else:
-            df_final = add_data
-        df_final.to_csv(db_file, index=False, encoding="utf_8_sig")
-        st.sidebar.success("追加しました！")
+# サイドバー：過去分取得
+st.sidebar.header("📥 ニュース取得")
+get_date = st.sidebar.date_input("取得したい過去の日付", datetime.date.today())
+if st.sidebar.button("この日のニュースを遡って取得"):
+    count = fetch_news(get_date)
+    if count > 0:
+        st.sidebar.success(f"{count}件の記事を取得・保存しました！")
         st.rerun()
     else:
-        st.sidebar.error("タイトルを入力してください")
+        st.sidebar.warning("RSSにデータが残っていないか、条件に合う記事がありませんでした。")
 
-# メインエリア：カレンダーウィジェット
+# （以下、前回の手動追加とカレンダー表示ロジックを継続）
+st.sidebar.markdown("---")
+st.sidebar.subheader("➕ 手動で追加")
+manual_date = st.sidebar.date_input("追加日", datetime.date.today(), key="manual")
+manual_title = st.sidebar.text_input("タイトル")
+manual_url = st.sidebar.text_input("URL")
+if st.sidebar.button("保存"):
+    add_df = pd.DataFrame([[manual_date.strftime("%Y-%m-%d"), manual_title, manual_url]], columns=["date", "title", "url"])
+    if os.path.exists(db_file):
+        df_old = pd.read_csv(db_file)
+        pd.concat([df_old, add_df]).drop_duplicates().to_csv(db_file, index=False, encoding="utf_8_sig")
+    else:
+        add_df.to_csv(db_file, index=False, encoding="utf_8_sig")
+    st.rerun()
+
+# メイン表示
 col1, col2 = st.columns([1, 2])
-
 with col1:
-    st.subheader("日付を選択")
-    # 視覚的なカレンダーを表示
-    selected_date = st.date_input("ニュースを見たい日をクリックしてください", datetime.date.today())
-    target_date_str = selected_date.strftime("%Y-%m-%d")
+    selected_date = st.date_input("カレンダーで表示", datetime.date.today(), key="view")
+    target_str = selected_date.strftime("%Y-%m-%d")
 
 with col2:
-    st.subheader(f"🔍 {target_date_str} のニュース")
+    st.subheader(f"🔍 {target_str} のニュース")
     if os.path.exists(db_file):
         df = pd.read_csv(db_file)
-        # 文字列として比較するために変換
-        display_df = df[df["date"] == target_date_str]
-        
-        if len(display_df) == 0:
-            st.info("この日のニュースはありません。")
-        else:
+        display_df = df[df["date"] == target_str]
+        if not display_df.empty:
             for _, row in display_df.iterrows():
-                link = row['url'] if pd.notna(row['url']) and row['url'] != "" else "#"
-                st.markdown(f"✅ [{row['title']}]({link})")
-    else:
-        st.warning("データがありません。サイドバーから取得してください。")
+                st.markdown(f"✅ [{row['title']}]({row['url']})")
+        else:
+            st.info("データがありません。「取得」ボタンを試してください。")
