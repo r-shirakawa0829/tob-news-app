@@ -2,26 +2,30 @@ name: Daily News Update
 
 on:
   schedule:
-    - cron: '0 0,9 * * *' # 日本時間の午前9時と午後6時ごろに実行
-  workflow_dispatch: # 手動実行も可能にする設定
+    - cron: '0 0,9 * * *'
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # GitHubにデータを書き込む権限
+      contents: write
     steps:
       - uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-       run: pip install feedparser pandas streamlit
+        run: |
+          pip install feedparser pandas streamlit
+
       - name: Run collector
         run: |
-          # app.pyの中にある収集関数を実行する命令
           python -c "from app import fetch_all_sources; fetch_all_sources()"
+
       - name: Commit and Push
         run: |
           git config user.name "github-actions[bot]"
