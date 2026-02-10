@@ -1,8 +1,10 @@
 name: Daily News Update
+
 on:
   schedule:
-    - cron: '0 0,9 * * *' # 日本時間の9時と18時ごろに自動実行
+    - cron: '0 0,9 * * *'
   workflow_dispatch:
+
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -10,15 +12,20 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-        run: pip install feedparser pandas
+        run: |
+          pip install feedparser pandas streamlit
+
       - name: Run collector
         run: |
-          python -c "from app import fetch_news; fetch_news()"
+          python -c "from app import fetch_all_sources; fetch_all_sources()"
+
       - name: Commit and Push
         run: |
           git config user.name "github-actions[bot]"
