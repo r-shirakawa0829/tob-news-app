@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install dependencies
-        run: pip install feedparser pandas
+       run: pip install feedparser pandas streamlit
       - name: Run collector
         run: |
           # app.pyの中にある収集関数を実行する命令
